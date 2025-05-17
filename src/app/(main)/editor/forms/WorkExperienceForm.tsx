@@ -33,37 +33,46 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { GripHorizontal } from "lucide-react";
-import { useEffect } from "react";
-import { useFieldArray, useForm, UseFormReturn } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import {
+  useFieldArray,
+  useForm,
+  UseFormReturn,
+  useWatch,
+} from "react-hook-form";
 import GenerateWorkExperienceButton from "./GenerateWorkExperienceButton";
+import useDebounce from "@/hooks/useDebounce";
 
 export default function WorkExperienceForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
+  const initRef = useRef<WorkExperienceValues>({
+    workExperiences: resumeData.workExperiences ?? [],
+  });
   const form = useForm<WorkExperienceValues>({
     resolver: zodResolver(workExperienceSchema),
-    defaultValues: { workExperiences: resumeData.workExperiences || [] },
+    defaultValues: initRef.current,
+    mode: "onBlur",
   });
+  const watched = useWatch({ control: form.control });
+  const debouncedVal = useDebounce(watched, 400);
 
   useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({
-        ...resumeData,
-        workExperiences:
-          values.workExperiences?.filter((exp) => exp !== undefined) || [],
-      });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+    (async () => {
+      const ok = await form.trigger();
+      if (!ok) return;
+      setResumeData((prev) => ({
+        ...prev,
+        workExperiences: debouncedVal.workExperiences?.filter(Boolean) ?? [],
+      }));
+    })();
+  }, [debouncedVal, form, setResumeData]);
 
   const { fields, append, remove, move } = useFieldArray({
     control: form.control,
     name: "workExperiences",
   });
-
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, {
@@ -71,14 +80,13 @@ export default function WorkExperienceForm({
     }),
   );
 
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
     if (over && active.id !== over.id) {
-      const oldIndex = fields.findIndex((field) => field.id === active.id);
-      const newIndex = fields.findIndex((field) => field.id === over.id);
-      move(oldIndex, newIndex);
-      return arrayMove(fields, oldIndex, newIndex);
+      const oldIdx = fields.findIndex((f) => f.id === active.id);
+      const newIdx = fields.findIndex((f) => f.id === over.id);
+      move(oldIdx, newIdx); // react-hook-form actualiza los datos
+      arrayMove(fields, oldIdx, newIdx); // solo para animación
     }
   }
 

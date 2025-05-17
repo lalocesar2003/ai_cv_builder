@@ -8,7 +8,9 @@ interface PageProps {
   searchParams: Promise<{ resumeId?: string }>;
 }
 
-export const metadata: Metadata = { title: "Design your resume" };
+export const metadata: Metadata = {
+  title: "Design your resume",
+};
 
 export default async function Page({ searchParams }: PageProps) {
   const { resumeId } = await searchParams;

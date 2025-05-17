@@ -10,27 +10,34 @@ import { Textarea } from "@/components/ui/textarea";
 import { EditorFormProps } from "@/lib/types";
 import { summarySchema, SummaryValues } from "@/lib/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import GenerateSummaryButton from "./GenerateSummaryButton";
+import useDebounce from "@/hooks/useDebounce";
 
 export default function SummaryForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
+  const initRef = useRef<SummaryValues>({ summary: resumeData.summary ?? "" });
+
+  /* 2 ▸ useForm único */
   const form = useForm<SummaryValues>({
     resolver: zodResolver(summarySchema),
-    defaultValues: { summary: resumeData.summary || "" },
+    defaultValues: initRef.current,
+    mode: "onBlur",
   });
 
+  /* 3 ▸ watch + debounce */
+  const watchedSummary = useWatch({ control: form.control, name: "summary" });
+  const debounced = useDebounce(watchedSummary, 400);
+
   useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({ ...resumeData, ...values });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+    (async () => {
+      const ok = await form.trigger("summary");
+      if (ok) setResumeData((prev) => ({ ...prev, summary: debounced ?? "" }));
+    })();
+  }, [debounced, form, setResumeData]);
 
   return (
     <div className="mx-auto max-w-xl space-y-6">

@@ -8,33 +8,38 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import useDebounce from "@/hooks/useDebounce";
 import { EditorFormProps } from "@/lib/types";
 import { generalInfoSchema, GeneralInfoValues } from "@/lib/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { useForm } from "react-hook-form";
-
+import { useEffect, useRef } from "react";
+import { useForm, useWatch } from "react-hook-form";
+import type { UseFormReturn } from "react-hook-form";
 export default function GeneralInfoForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
-  const form = useForm<GeneralInfoValues>({
-    resolver: zodResolver(generalInfoSchema),
-    defaultValues: {
-      title: resumeData.title || "",
-      description: resumeData.description || "",
-    },
+  const initialValuesRef = useRef<GeneralInfoValues>({
+    title: resumeData.title ?? "",
+    description: resumeData.description ?? "",
   });
 
-  useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({ ...resumeData, ...values });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+  const form = useForm<GeneralInfoValues>({
+    resolver: zodResolver(generalInfoSchema),
+    defaultValues: initialValuesRef.current,
+    mode: "onBlur", // validación ligera
+  });
 
+  const values = useWatch({ control: form.control });
+  const debouncedVals = useDebounce(values, 400);
+
+  useEffect(() => {
+    (async () => {
+      const valid = await form.trigger(); // valida una vez
+      if (!valid) return;
+      setResumeData((prev) => ({ ...prev, ...debouncedVals }));
+    })();
+  }, [debouncedVals, form, setResumeData]);
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div className="space-y-1.5 text-center">

@@ -8,38 +8,53 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import useDebounce from "@/hooks/useDebounce";
 import { EditorFormProps } from "@/lib/types";
 import { personalInfoSchema, PersonalInfoValues } from "@/lib/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 
 export default function PersonalInfoForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
-  const form = useForm<PersonalInfoValues>({
-    resolver: zodResolver(personalInfoSchema),
-    defaultValues: {
-      firstName: resumeData.firstName || "",
-      lastName: resumeData.lastName || "",
-      jobTitle: resumeData.jobTitle || "",
-      city: resumeData.city || "",
-      country: resumeData.country || "",
-      phone: resumeData.phone || "",
-      email: resumeData.email || "",
-    },
+  const initialValuesRef = useRef<PersonalInfoValues>({
+    firstName: resumeData.firstName ?? "",
+    lastName: resumeData.lastName ?? "",
+    jobTitle: resumeData.jobTitle ?? "",
+    city: resumeData.city ?? "",
+    country: resumeData.country ?? "",
+    phone: resumeData.phone ?? "",
+    email: resumeData.email ?? "",
+    photo:
+      resumeData.photo instanceof File // ✅ File subido recién
+        ? resumeData.photo
+        : undefined, // ⬅ convierte string/null a undefined
   });
 
-  useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({ ...resumeData, ...values });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+  /* 2 ▸ instancia única del formulario */
+  const form = useForm<PersonalInfoValues>({
+    resolver: zodResolver(personalInfoSchema),
+    defaultValues: initialValuesRef.current,
+    mode: "onBlur",
+  });
 
+  /* 3 ▸ escucha cambios UNA sola vez y aplícales debounce */
+  const values = useWatch({ control: form.control });
+  const debouncedVals = useDebounce(values, 400);
+
+  useEffect(() => {
+    (async () => {
+      /* valida todo el conjunto una vez cada 400 ms */
+      const ok = await form.trigger();
+      if (!ok) return;
+      /* functional-update → evita bucles de render */
+      setResumeData((prev) => ({ ...prev, ...debouncedVals }));
+    })();
+  }, [debouncedVals, form, setResumeData]);
+
+  /* 4 ▸ input file necesita una ref para “reset” */
   const photoInputRef = useRef<HTMLInputElement>(null);
 
   return (

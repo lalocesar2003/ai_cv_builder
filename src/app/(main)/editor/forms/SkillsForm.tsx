@@ -8,36 +8,45 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Textarea } from "@/components/ui/textarea";
+import useDebounce from "@/hooks/useDebounce";
 import { EditorFormProps } from "@/lib/types";
 import { skillsSchema, SkillsValues } from "@/lib/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect } from "react";
-import { useForm } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import { useForm, useWatch } from "react-hook-form";
 
 export default function SkillsForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
-  const form = useForm<SkillsValues>({
-    resolver: zodResolver(skillsSchema),
-    defaultValues: { skills: resumeData.skills || [] },
+  const initRef = useRef<SkillsValues>({
+    skills: resumeData.skills ?? [],
   });
 
+  /* 2 ▸ useForm único */
+  const form = useForm<SkillsValues>({
+    resolver: zodResolver(skillsSchema),
+    defaultValues: initRef.current,
+    mode: "onChange", // valida mientras se escribe (ligero)
+  });
+
+  /* 3 ▸ watch + debounce */
+  const watchedSkills = useWatch({ control: form.control, name: "skills" });
+  const debouncedSkills = useDebounce(watchedSkills, 400);
+
   useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({
-        ...resumeData,
-        skills:
-          values.skills
-            ?.filter((skill) => skill !== undefined)
-            .map((skill) => skill.trim())
-            .filter((skill) => skill !== "") || [],
-      });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+    (async () => {
+      const ok = await form.trigger("skills");
+      if (!ok) return;
+
+      const cleanSkills = (debouncedSkills ?? [])
+        .filter(Boolean)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
+      setResumeData((prev) => ({ ...prev, skills: cleanSkills }));
+    })();
+  }, [debouncedSkills, form, setResumeData]);
 
   return (
     <div className="mx-auto max-w-xl space-y-6">

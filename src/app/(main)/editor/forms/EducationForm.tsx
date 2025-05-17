@@ -8,6 +8,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import useDebounce from "@/hooks/useDebounce";
 import { EditorFormProps } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { educationSchema, EducationValues } from "@/lib/validation";
@@ -31,30 +32,40 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { GripHorizontal } from "lucide-react";
-import { useEffect } from "react";
-import { useFieldArray, useForm, UseFormReturn } from "react-hook-form";
+import { useEffect, useRef } from "react";
+import {
+  useFieldArray,
+  useForm,
+  UseFormReturn,
+  useWatch,
+} from "react-hook-form";
 
 export default function EducationForm({
   resumeData,
   setResumeData,
 }: EditorFormProps) {
+  const initRef = useRef<EducationValues>({
+    educations: resumeData.educations ?? [],
+  });
   const form = useForm<EducationValues>({
     resolver: zodResolver(educationSchema),
-    defaultValues: { educations: resumeData.educations || [] },
+    defaultValues: initRef.current,
+    mode: "onBlur",
   });
 
-  useEffect(() => {
-    const { unsubscribe } = form.watch(async (values) => {
-      const isValid = await form.trigger();
-      if (!isValid) return;
-      setResumeData({
-        ...resumeData,
-        educations: values.educations?.filter((edu) => edu !== undefined) || [],
-      });
-    });
-    return unsubscribe;
-  }, [form, resumeData, setResumeData]);
+  const watched = useWatch({ control: form.control });
+  const debouncedVal = useDebounce(watched, 400);
 
+  useEffect(() => {
+    (async () => {
+      const ok = await form.trigger();
+      if (!ok) return;
+      setResumeData((prev) => ({
+        ...prev,
+        educations: debouncedVal.educations?.filter(Boolean) ?? [],
+      }));
+    })();
+  }, [debouncedVal, form, setResumeData]);
   const { fields, append, remove, move } = useFieldArray({
     control: form.control,
     name: "educations",
@@ -67,14 +78,13 @@ export default function EducationForm({
     }),
   );
 
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-
+  function handleDragEnd(e: DragEndEvent) {
+    const { active, over } = e;
     if (over && active.id !== over.id) {
-      const oldIndex = fields.findIndex((field) => field.id === active.id);
-      const newIndex = fields.findIndex((field) => field.id === over.id);
-      move(oldIndex, newIndex);
-      return arrayMove(fields, oldIndex, newIndex);
+      const oldIdx = fields.findIndex((f) => f.id === active.id);
+      const newIdx = fields.findIndex((f) => f.id === over.id);
+      move(oldIdx, newIdx);
+      arrayMove(fields, oldIdx, newIdx); // solo animación
     }
   }
 

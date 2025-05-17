@@ -1,11 +1,13 @@
 import { Prisma } from "@prisma/client";
 import { ResumeValues } from "./validation";
+import { Dispatch, SetStateAction } from "react";
 
 export interface EditorFormProps {
   resumeData: ResumeValues;
-  setResumeData: (data: ResumeValues) => void;
+  setResumeData: Dispatch<SetStateAction<ResumeValues>>;
+  //          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  //   acepta objeto o función
 }
-
 export const resumeDataInclude = {
   workExperiences: true,
   educations: true,
