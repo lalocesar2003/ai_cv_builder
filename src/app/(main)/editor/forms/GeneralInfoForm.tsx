@@ -14,7 +14,7 @@ import { generalInfoSchema, GeneralInfoValues } from "@/lib/validation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useRef } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import type { UseFormReturn } from "react-hook-form";
+
 export default function GeneralInfoForm({
   resumeData,
   setResumeData,

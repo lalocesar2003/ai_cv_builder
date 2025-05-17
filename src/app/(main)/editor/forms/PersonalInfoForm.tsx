@@ -27,10 +27,7 @@ export default function PersonalInfoForm({
     country: resumeData.country ?? "",
     phone: resumeData.phone ?? "",
     email: resumeData.email ?? "",
-    photo:
-      resumeData.photo instanceof File // ✅ File subido recién
-        ? resumeData.photo
-        : undefined, // ⬅ convierte string/null a undefined
+    photo: resumeData.photo instanceof File ? resumeData.photo : undefined,
   });
 
   /* 2 ▸ instancia única del formulario */
@@ -46,10 +43,8 @@ export default function PersonalInfoForm({
 
   useEffect(() => {
     (async () => {
-      /* valida todo el conjunto una vez cada 400 ms */
       const ok = await form.trigger();
       if (!ok) return;
-      /* functional-update → evita bucles de render */
       setResumeData((prev) => ({ ...prev, ...debouncedVals }));
     })();
   }, [debouncedVals, form, setResumeData]);
@@ -63,44 +58,55 @@ export default function PersonalInfoForm({
         <h2 className="text-2xl font-semibold">Personal info</h2>
         <p className="text-sm text-muted-foreground">Tell us about yourself.</p>
       </div>
+
       <Form {...form}>
         <form className="space-y-3">
+          {/* PHOTO */}
           <FormField
             control={form.control}
             name="photo"
-            render={({ field: { value, ...fieldValues } }) => (
-              <FormItem>
-                <FormLabel>Your photo</FormLabel>
-                <div className="flex items-center gap-2">
-                  <FormControl>
-                    <Input
-                      {...fieldValues}
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        fieldValues.onChange(file);
+            render={({ field }) => {
+              /* value (y ref) no sirven con <input type="file">,
+       así que los sacamos y nos quedamos solo con lo necesario */
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              const { value, ref, ...fieldWithoutValue } = field;
+
+              return (
+                <FormItem>
+                  <FormLabel>Your photo</FormLabel>
+                  <div className="flex items-center gap-2">
+                    <FormControl>
+                      <Input
+                        {...fieldWithoutValue}
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          fieldWithoutValue.onChange(file);
+                        }}
+                        ref={photoInputRef}
+                      />
+                    </FormControl>
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      onClick={() => {
+                        fieldWithoutValue.onChange(null);
+                        if (photoInputRef.current?.value) {
+                          photoInputRef.current.value = "";
+                        }
                       }}
-                      ref={photoInputRef}
-                    />
-                  </FormControl>
-                  <Button
-                    variant="secondary"
-                    type="button"
-                    onClick={() => {
-                      fieldValues.onChange(null);
-                      if (photoInputRef.current) {
-                        photoInputRef.current.value = "";
-                      }
-                    }}
-                  >
-                    Remove
-                  </Button>
-                </div>
-                <FormMessage />
-              </FormItem>
-            )}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
           />
+
+          {/* FIRST & LAST NAME */}
           <div className="grid grid-cols-2 gap-3">
             <FormField
               control={form.control}
@@ -129,6 +135,8 @@ export default function PersonalInfoForm({
               )}
             />
           </div>
+
+          {/* JOB TITLE */}
           <FormField
             control={form.control}
             name="jobTitle"
@@ -142,6 +150,8 @@ export default function PersonalInfoForm({
               </FormItem>
             )}
           />
+
+          {/* CITY & COUNTRY */}
           <div className="grid grid-cols-2 gap-3">
             <FormField
               control={form.control}
@@ -170,6 +180,8 @@ export default function PersonalInfoForm({
               )}
             />
           </div>
+
+          {/* PHONE */}
           <FormField
             control={form.control}
             name="phone"
@@ -183,6 +195,8 @@ export default function PersonalInfoForm({
               </FormItem>
             )}
           />
+
+          {/* EMAIL */}
           <FormField
             control={form.control}
             name="email"
