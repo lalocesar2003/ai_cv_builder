@@ -5,9 +5,20 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
+type WebhookMeta = {
+  rid: string;
+};
+
+function makeRid(): string {
+  return `wh_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function isValidDate(d: Date): boolean {
+  return !Number.isNaN(d.getTime());
+}
+
 export async function POST(req: NextRequest) {
-  // id simple para correlacionar en Vercel logs
-  const rid = `wh_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const rid = makeRid();
 
   try {
     const payload = await req.text();
@@ -15,10 +26,7 @@ export async function POST(req: NextRequest) {
 
     console.log(
       `[${rid}] webhook hit`,
-      JSON.stringify({
-        hasSignature: !!signature,
-        contentLength: payload?.length ?? 0,
-      }),
+      JSON.stringify({ hasSignature: !!signature, payloadLen: payload.length }),
     );
 
     if (!signature) {
@@ -30,98 +38,104 @@ export async function POST(req: NextRequest) {
       payload,
       signature,
       env.STRIPE_WEBHOOK_SECRET,
-    );
+    ) as Stripe.Event;
 
     console.log(
       `[${rid}] event`,
       JSON.stringify({
-        type: event.type,
         id: event.id,
-        created: (event as any).created,
-        livemode: (event as any).livemode,
+        type: event.type,
+        created: event.created,
+        livemode: event.livemode,
       }),
     );
 
     switch (event.type) {
       case "checkout.session.completed": {
-        const s = event.data.object as Stripe.Checkout.Session;
+        const session = event.data.object as Stripe.Checkout.Session;
+
         console.log(
           `[${rid}] session.completed snapshot`,
           JSON.stringify({
-            sessionId: s.id,
-            customer: s.customer,
-            subscription: s.subscription,
-            metadata: s.metadata,
-            mode: s.mode,
-            payment_status: (s as any).payment_status,
+            sessionId: session.id,
+            mode: session.mode,
+            customer: session.customer,
+            subscription: session.subscription,
+            metadata: session.metadata,
           }),
         );
-        await handleSessionCompleted(s, rid);
+
+        await handleSessionCompleted(session, { rid });
         break;
       }
 
       case "customer.subscription.created":
       case "customer.subscription.updated": {
-        const sub = event.data.object as Stripe.Subscription;
+        const subscription = event.data.object as Stripe.Subscription;
 
-        // 👇 ESTE snapshot es el que necesitas para entender el Invalid Date
+        const firstPriceId = subscription.items.data[0]?.price?.id ?? null;
+
         console.log(
           `[${rid}] subscription snapshot`,
           JSON.stringify({
-            subId: sub.id,
-            status: sub.status,
-            customer: sub.customer,
-            current_period_end: (sub as any).current_period_end,
-            current_period_end_type: typeof (sub as any).current_period_end,
-            cancel_at_period_end: sub.cancel_at_period_end,
-            items_len: sub.items?.data?.length,
-            price0: sub.items?.data?.[0]?.price?.id,
-            metadata: sub.metadata,
+            subId: subscription.id,
+            status: subscription.status,
+            customer: subscription.customer,
+            current_period_end: subscription.current_period_end,
+            current_period_end_type: typeof subscription.current_period_end,
+            cancel_at_period_end: subscription.cancel_at_period_end,
+            items_len: subscription.items.data.length,
+            price0: firstPriceId,
+            metadata: subscription.metadata,
           }),
         );
 
-        await handleSubscriptionCreatedOrUpdated(sub, rid);
+        await handleSubscriptionCreatedOrUpdated(subscription, { rid });
         break;
       }
 
       case "customer.subscription.deleted": {
-        const sub = event.data.object as Stripe.Subscription;
+        const subscription = event.data.object as Stripe.Subscription;
+
         console.log(
           `[${rid}] subscription.deleted snapshot`,
           JSON.stringify({
-            subId: sub.id,
-            status: sub.status,
-            customer: sub.customer,
-            metadata: sub.metadata,
+            subId: subscription.id,
+            status: subscription.status,
+            customer: subscription.customer,
+            metadata: subscription.metadata,
           }),
         );
-        await handleSubscriptionDeleted(sub, rid);
+
+        await handleSubscriptionDeleted(subscription, { rid });
         break;
       }
 
       default:
-        console.log(`[${rid}] Unhandled event type`, event.type);
+        console.log(`[${rid}] Unhandled event type: ${event.type}`);
     }
 
     console.log(`[${rid}] webhook done`);
     return NextResponse.json({ received: true });
-  } catch (err: any) {
-    // Stripe error + Prisma error van aquí
-    console.error(`[${rid}] webhook error`, err?.message ?? err);
+  } catch (err) {
+    const rid = "unknown_rid"; // fallback (no any)
+
+    // Error seguro sin any: mejor loguear el objeto completo
+    console.error(`[${rid}] webhook error`, err);
     return NextResponse.json("Webhook error", { status: 500 });
   }
 }
 
 async function handleSessionCompleted(
   session: Stripe.Checkout.Session,
-  rid: string,
+  meta: WebhookMeta,
 ) {
   const userId = session.metadata?.userId;
 
   console.log(
-    `[${rid}] handleSessionCompleted`,
+    `[${meta.rid}] handleSessionCompleted`,
     JSON.stringify({
-      userId,
+      userId: userId ?? null,
       customer: session.customer,
       subscription: session.subscription,
     }),
@@ -134,57 +148,59 @@ async function handleSessionCompleted(
     privateMetadata: { stripeCustomerId: session.customer as string },
   });
 
-  console.log(`[${rid}] Clerk updated privateMetadata.stripeCustomerId`);
+  console.log(`[${meta.rid}] Clerk updated stripeCustomerId`);
 }
 
 async function handleSubscriptionCreatedOrUpdated(
   subscription: Stripe.Subscription,
-  rid: string,
+  meta: WebhookMeta,
 ) {
-  const userId = (subscription.metadata as any)?.userId;
+  const userId = subscription.metadata.userId;
 
   console.log(
-    `[${rid}] handleSubscriptionCreatedOrUpdated`,
+    `[${meta.rid}] handleSubscriptionCreatedOrUpdated`,
     JSON.stringify({
       subId: subscription.id,
       status: subscription.status,
-      userId,
+      userId: userId ?? null,
     }),
   );
 
   if (!userId) {
     console.error(
-      `[${rid}] subscription.metadata.userId missing -> skipping upsert`,
+      `[${meta.rid}] subscription.metadata.userId missing -> skipping upsert`,
     );
     return;
   }
 
   const firstItem = subscription.items.data[0];
   if (!firstItem) {
-    console.error(`[${rid}] subscription.items.data[0] missing -> skipping`);
+    console.error(
+      `[${meta.rid}] subscription.items.data[0] missing -> skipping`,
+    );
     return;
   }
 
-  // 🔥 Aquí aislamos el problema: current_period_end
-  const raw = (subscription as any).current_period_end;
+  // ✅ Debug exacto del problema (sin any)
+  const raw = subscription.current_period_end; // number
   const ms = Number(raw) * 1000;
   const date = new Date(ms);
 
   console.log(
-    `[${rid}] period_end computed`,
+    `[${meta.rid}] period_end computed`,
     JSON.stringify({
       raw,
       rawType: typeof raw,
       ms,
       isFinite: Number.isFinite(ms),
       dateString: date.toString(),
-      dateValid: !Number.isNaN(date.getTime()),
+      dateValid: isValidDate(date),
     }),
   );
 
   if (!["active", "trialing", "past_due"].includes(subscription.status)) {
     console.log(
-      `[${rid}] status not billable -> deleting`,
+      `[${meta.rid}] status not billable -> deleting`,
       subscription.status,
     );
     await prisma.userSubscription.deleteMany({
@@ -200,7 +216,7 @@ async function handleSubscriptionCreatedOrUpdated(
       stripeSubscriptionId: subscription.id,
       stripeCustomerId: subscription.customer as string,
       stripePriceId: firstItem.price.id,
-      stripeCurrentPeriodEnd: date, // <- si esto es inválido, lo verás arriba
+      stripeCurrentPeriodEnd: date,
       stripeCancelAtPeriodEnd: subscription.cancel_at_period_end,
     },
     update: {
@@ -210,15 +226,15 @@ async function handleSubscriptionCreatedOrUpdated(
     },
   });
 
-  console.log(`[${rid}] Prisma upsert OK`);
+  console.log(`[${meta.rid}] Prisma upsert OK`);
 }
 
 async function handleSubscriptionDeleted(
   subscription: Stripe.Subscription,
-  rid: string,
+  meta: WebhookMeta,
 ) {
   console.log(
-    `[${rid}] handleSubscriptionDeleted`,
+    `[${meta.rid}] handleSubscriptionDeleted`,
     JSON.stringify({
       subId: subscription.id,
     }),
