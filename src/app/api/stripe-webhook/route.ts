@@ -59,9 +59,6 @@ async function handleSessionCompleted(session: Stripe.Checkout.Session) {
 async function handleSubscriptionCreatedOrUpdated(
   subscription: Stripe.Subscription,
 ) {
-  console.log("SUB METADATA:", subscription.metadata);
-  console.log("SUB STATUS:", subscription.status);
-  console.log("SUB ID:", subscription.id);
   const { userId } = subscription.metadata;
   if (!userId) return;
 
