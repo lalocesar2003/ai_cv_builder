@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
     console.log(`[${rid}] webhook done`);
     return NextResponse.json({ received: true });
   } catch (err) {
-    const rid = "unknown_rid"; // fallback (no any)
+    // ✅ no re-declares rid (así no pierdes trazabilidad)
     console.error(`[${rid}] webhook error`, err);
     return NextResponse.json("Webhook error", { status: 500 });
   }
@@ -141,12 +141,55 @@ async function handleSessionCompleted(
 
   if (!userId) throw new Error("User ID is missing in session metadata");
 
+  // 1) Guardar stripeCustomerId en Clerk
   const clerk = await clerkClient();
   await clerk.users.updateUserMetadata(userId, {
     privateMetadata: { stripeCustomerId: session.customer as string },
   });
 
   console.log(`[${meta.rid}] Clerk updated stripeCustomerId`);
+
+  // 2) Guardar suscripción en Prisma usando retrieve() (datos completos)
+  const subscriptionId = session.subscription as string | null;
+  if (!subscriptionId) {
+    console.log(`[${meta.rid}] session.completed without subscriptionId`);
+    return;
+  }
+
+  const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+  const firstItem = subscription.items.data[0];
+  if (!firstItem) throw new Error("Subscription item missing");
+
+  const periodEnd = new Date(subscription.current_period_end * 1000);
+  if (!isValidDate(periodEnd)) {
+    throw new Error(
+      `Invalid current_period_end from retrieve(). raw=${String(
+        subscription.current_period_end,
+      )} subId=${subscription.id}`,
+    );
+  }
+
+  await prisma.userSubscription.upsert({
+    where: { userId }, // 👈 recomendado (tu app lee por userId)
+    create: {
+      userId,
+      stripeSubscriptionId: subscription.id,
+      stripeCustomerId: subscription.customer as string,
+      stripePriceId: firstItem.price.id,
+      stripeCurrentPeriodEnd: periodEnd,
+      stripeCancelAtPeriodEnd: subscription.cancel_at_period_end,
+    },
+    update: {
+      stripeSubscriptionId: subscription.id,
+      stripeCustomerId: subscription.customer as string,
+      stripePriceId: firstItem.price.id,
+      stripeCurrentPeriodEnd: periodEnd,
+      stripeCancelAtPeriodEnd: subscription.cancel_at_period_end,
+    },
+  });
+
+  console.log(`[${meta.rid}] ✅ Prisma upsert OK (from session.completed)`);
 }
 
 async function handleSubscriptionCreatedOrUpdated(
@@ -179,23 +222,20 @@ async function handleSubscriptionCreatedOrUpdated(
     return;
   }
 
-  // ✅ Debug exacto del problema (sin any)
-  const raw = subscription.current_period_end; // number
-  const ms = Number(raw) * 1000;
-  const date = new Date(ms);
-
-  if (Number.isNaN(date.getTime())) {
-    // 💥 forzamos un error con contexto exacto (esto es debug)
-    throw new Error(
-      `Invalid current_period_end. raw=${String(raw)} type=${typeof raw} ms=${String(ms)} status=${subscription.status} subId=${subscription.id}`,
-    );
+  // ✅ Evita el caso 'incomplete' (aquí current_period_end puede ser undefined)
+  if (!["active", "trialing", "past_due"].includes(subscription.status)) {
+    console.log(`[${meta.rid}] skip upsert, status:`, subscription.status);
+    return;
   }
+
+  const ms = subscription.current_period_end * 1000;
+  const date = new Date(ms);
 
   console.log(
     `[${meta.rid}] period_end computed`,
     JSON.stringify({
-      raw,
-      rawType: typeof raw,
+      raw: subscription.current_period_end,
+      rawType: typeof subscription.current_period_end,
       ms,
       isFinite: Number.isFinite(ms),
       dateString: date.toString(),
@@ -203,19 +243,13 @@ async function handleSubscriptionCreatedOrUpdated(
     }),
   );
 
-  if (!["active", "trialing", "past_due"].includes(subscription.status)) {
-    console.log(
-      `[${meta.rid}] status not billable -> deleting`,
-      subscription.status,
-    );
-    await prisma.userSubscription.deleteMany({
-      where: { stripeSubscriptionId: subscription.id },
-    });
+  if (!isValidDate(date)) {
+    console.log(`[${meta.rid}] skip upsert, invalid period end`);
     return;
   }
 
   await prisma.userSubscription.upsert({
-    where: { stripeSubscriptionId: subscription.id },
+    where: { userId }, // 👈 recomendado
     create: {
       userId,
       stripeSubscriptionId: subscription.id,
@@ -225,6 +259,8 @@ async function handleSubscriptionCreatedOrUpdated(
       stripeCancelAtPeriodEnd: subscription.cancel_at_period_end,
     },
     update: {
+      stripeSubscriptionId: subscription.id,
+      stripeCustomerId: subscription.customer as string,
       stripePriceId: firstItem.price.id,
       stripeCurrentPeriodEnd: date,
       stripeCancelAtPeriodEnd: subscription.cancel_at_period_end,
