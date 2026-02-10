@@ -119,8 +119,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   } catch (err) {
     const rid = "unknown_rid"; // fallback (no any)
-
-    // Error seguro sin any: mejor loguear el objeto completo
     console.error(`[${rid}] webhook error`, err);
     return NextResponse.json("Webhook error", { status: 500 });
   }
@@ -185,6 +183,13 @@ async function handleSubscriptionCreatedOrUpdated(
   const raw = subscription.current_period_end; // number
   const ms = Number(raw) * 1000;
   const date = new Date(ms);
+
+  if (Number.isNaN(date.getTime())) {
+    // 💥 forzamos un error con contexto exacto (esto es debug)
+    throw new Error(
+      `Invalid current_period_end. raw=${String(raw)} type=${typeof raw} ms=${String(ms)} status=${subscription.status} subId=${subscription.id}`,
+    );
+  }
 
   console.log(
     `[${meta.rid}] period_end computed`,
